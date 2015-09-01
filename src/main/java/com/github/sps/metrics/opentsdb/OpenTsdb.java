@@ -18,14 +18,16 @@ package com.github.sps.metrics.opentsdb;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.ws.rs.client.*;
 import javax.ws.rs.core.MediaType;
+import javax.ws.rs.core.MultivaluedMap;
+import javax.xml.bind.DatatypeConverter;
+import java.io.IOException;
+import java.io.UnsupportedEncodingException;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
-import javax.ws.rs.client.Client;
-import javax.ws.rs.client.ClientBuilder;
-import javax.ws.rs.client.Entity;
-import javax.ws.rs.client.WebTarget;
+
 import org.glassfish.jersey.client.ClientProperties;
 import org.glassfish.jersey.jackson.JacksonFeature;
 
@@ -68,9 +70,11 @@ public class OpenTsdb {
 
     public static class Builder {
 
-        private Integer connectionTimeout = CONN_TIMEOUT_DEFAULT_MS;
-        private Integer readTimeout = READ_TIMEOUT_DEFAULT_MS;
-        private final String baseUrl;
+      private final String baseUrl;
+      private Integer connectionTimeout = CONN_TIMEOUT_DEFAULT_MS;
+      private Integer readTimeout = READ_TIMEOUT_DEFAULT_MS;
+      private String login;
+      private String password;
 
         public Builder(String baseUrl) {
             this.baseUrl = baseUrl;
@@ -86,18 +90,56 @@ public class OpenTsdb {
             return this;
         }
 
+        public Builder withBasicAuth(String login, String password){
+          this.login = login;
+          this.password = password;
+          return this;
+        }
+
         public OpenTsdb create() {
-            return new OpenTsdb(baseUrl, connectionTimeout, readTimeout);
+            return new OpenTsdb(baseUrl, connectionTimeout, readTimeout, login, password);
         }
     }
+
+  public static class Authenticator implements ClientRequestFilter {
+
+    private final String user;
+    private final String password;
+
+    public Authenticator(String user, String password) {
+      this.user = user;
+      this.password = password;
+    }
+
+    public void filter(ClientRequestContext requestContext) throws IOException {
+      MultivaluedMap<String, Object> headers = requestContext.getHeaders();
+      final String basicAuthentication = getBasicAuthentication();
+      headers.add("Authorization", basicAuthentication);
+
+    }
+
+    private String getBasicAuthentication() {
+      String token = this.user + ":" + this.password;
+      try {
+        return "Basic " + DatatypeConverter.printBase64Binary(token.getBytes("UTF-8"));
+      } catch (UnsupportedEncodingException ex) {
+        throw new IllegalStateException("Cannot encode with UTF-8", ex);
+      }
+    }
+  }
 
     private OpenTsdb(WebTarget apiResource) {
         this.apiResource = apiResource;
     }
 
-    private OpenTsdb(String baseURL, Integer connectionTimeout, Integer readTimeout) {
-        final Client client = ClientBuilder.newBuilder()
-                .register(JacksonFeature.class).build();
+    private OpenTsdb(String baseURL, Integer connectionTimeout, Integer readTimeout, String login, String password) {
+        final Client client = ClientBuilder.newClient();
+        client.register(JacksonFeature.class);
+
+        if (login != null && !login.isEmpty() && password != null && !password.isEmpty()){
+          client.register(new Authenticator(login,password));
+        }
+
         client.property(ClientProperties.CONNECT_TIMEOUT, connectionTimeout);
         client.property(ClientProperties.READ_TIMEOUT, readTimeout);
 
